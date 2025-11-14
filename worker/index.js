@@ -260,12 +260,64 @@ async function scanEndpoint(url) {
     const response = await fetchWithTimeout(url, { method: 'GET' })
     const status = response.status
     const contentType = response.headers.get('content-type') || ''
+    const contentLength = response.headers.get('content-length')
 
     let sample = null
-    if (status === 200 && contentType.includes('application/json')) {
+    let dataType = null
+    let dataInfo = null
+
+    if (status === 200) {
       try {
         const text = await response.text()
-        sample = text.substring(0, 200)
+        const textLength = text.length
+
+        // Get more data for open endpoints (up to 1000 chars)
+        if (contentType.includes('application/json')) {
+          dataType = 'JSON'
+          try {
+            const parsed = JSON.parse(text)
+            // Get first 1000 chars of formatted JSON
+            sample = JSON.stringify(parsed, null, 2).substring(0, 1000)
+            
+            // Analyze JSON structure
+            if (typeof parsed === 'object') {
+              const keys = Object.keys(parsed)
+              dataInfo = {
+                type: 'object',
+                keys: keys.slice(0, 10), // First 10 keys
+                totalKeys: keys.length,
+                size: textLength,
+              }
+            }
+          } catch {
+            // Not valid JSON, use raw text
+            sample = text.substring(0, 1000)
+            dataType = 'Text (JSON-like)'
+          }
+        } else if (contentType.includes('text/html')) {
+          dataType = 'HTML'
+          // Extract title or first meaningful content
+          const titleMatch = text.match(/<title[^>]*>([^<]+)<\/title>/i)
+          if (titleMatch) {
+            sample = `HTML Page - Title: ${titleMatch[1]}\n\nFirst 500 chars:\n${text.substring(0, 500)}`
+          } else {
+            sample = text.substring(0, 1000)
+          }
+        } else if (contentType.includes('text/plain') || contentType.includes('text/')) {
+          dataType = 'Text'
+          sample = text.substring(0, 1000)
+        } else if (contentType.includes('application/xml') || contentType.includes('text/xml')) {
+          dataType = 'XML'
+          sample = text.substring(0, 1000)
+        } else {
+          dataType = contentType.split(';')[0] || 'Unknown'
+          sample = text.substring(0, 1000)
+        }
+
+        // Add truncation notice if content is longer
+        if (textLength > 1000) {
+          sample += `\n\n... (truncated, total length: ${textLength} characters)`
+        }
       } catch {
         // Failed to read body, ignore
       }
@@ -276,6 +328,10 @@ async function scanEndpoint(url) {
       status,
       open: status === 200,
       sample,
+      dataType,
+      dataInfo,
+      contentType,
+      contentLength: contentLength ? parseInt(contentLength) : null,
     }
   } catch (error) {
     return {
