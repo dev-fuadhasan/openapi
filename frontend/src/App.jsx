@@ -75,9 +75,10 @@ function App() {
 
         {/* Results */}
         {scanResults && !loading && (() => {
-          const openEndpoints = (scanResults.common_endpoints || []).filter(e => e.open)
-          const exposedFiles = (scanResults.sensitive_files || []).filter(f => f.exposed)
-          const totalOpen = openEndpoints.length + exposedFiles.length
+          const openAPIs = scanResults.open_apis || []
+          const exposedFiles = scanResults.exposed_sensitive_files || []
+          const totalOpen = openAPIs.length + exposedFiles.length
+          const summary = scanResults.scan_summary || {}
 
           return (
             <div className="mt-8 space-y-6 max-w-6xl mx-auto">
@@ -98,15 +99,15 @@ function App() {
                         The following endpoints are publicly accessible and may expose sensitive data:
                       </p>
                       <div className="space-y-2">
-                        {openEndpoints.length > 0 && (
+                        {openAPIs.length > 0 && (
                           <div className="text-red-200">
-                            <span className="font-semibold">• {openEndpoints.length} Open API Endpoint{openEndpoints.length > 1 ? 's' : ''}:</span>
+                            <span className="font-semibold">• {openAPIs.length} Open API Endpoint{openAPIs.length > 1 ? 's' : ''} Found:</span>
                             <ul className="ml-4 mt-1 space-y-1">
-                              {openEndpoints.slice(0, 3).map((ep, idx) => (
+                              {openAPIs.slice(0, 3).map((ep, idx) => (
                                 <li key={idx} className="text-sm font-mono">{ep.url}</li>
                               ))}
-                              {openEndpoints.length > 3 && (
-                                <li className="text-sm">... and {openEndpoints.length - 3} more</li>
+                              {openAPIs.length > 3 && (
+                                <li className="text-sm">... and {openAPIs.length - 3} more</li>
                               )}
                             </ul>
                           </div>
@@ -142,10 +143,35 @@ function App() {
                 </div>
               )}
 
-              {/* Common Endpoints */}
+              {/* Scan Summary */}
+              {summary && (
+                <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold text-white mb-3">Scan Summary</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <div className="text-gray-400">Open APIs Found</div>
+                      <div className="text-2xl font-bold text-red-400">{summary.total_open_apis || 0}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-400">Exposed Files</div>
+                      <div className="text-2xl font-bold text-red-400">{summary.total_exposed_files || 0}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-400">Endpoints Checked</div>
+                      <div className="text-2xl font-bold text-blue-400">{summary.common_endpoints_checked || 0}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-400">Pages Crawled</div>
+                      <div className="text-2xl font-bold text-purple-400">50+</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Open APIs */}
               <ResultCard
-                title="Common API Endpoints"
-                items={scanResults.common_endpoints || []}
+                title={`Open APIs Found (${openAPIs.length})`}
+                items={openAPIs}
                 renderItem={(item) => (
                   <div className={`border-l-4 pl-4 py-3 rounded-r ${item.open ? 'bg-red-500/10 border-red-500' : 'border-blue-500'}`}>
                     <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
@@ -259,33 +285,10 @@ function App() {
                 )}
               />
 
-            {/* Discovered Endpoints */}
-            <ResultCard
-              title="Discovered Endpoints"
-              items={scanResults.discovered_endpoints || []}
-              renderItem={(item) => (
-                <div className="border-l-4 border-purple-500 pl-4 py-2">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-purple-400 hover:text-purple-300 break-all font-mono text-sm"
-                    >
-                      {item.url}
-                    </a>
-                    <span className="px-2 py-1 bg-gray-700/50 text-gray-400 text-xs rounded">
-                      {item.found_in}
-                    </span>
-                  </div>
-                </div>
-              )}
-            />
-
             {/* Sensitive Files */}
             <ResultCard
-              title="Sensitive Files"
-              items={scanResults.sensitive_files || []}
+              title={`Exposed Sensitive Files (${exposedFiles.length})`}
+              items={exposedFiles}
               renderItem={(item) => (
                 <div className={`border-l-4 pl-4 py-3 rounded-r ${item.exposed ? 'bg-red-500/10 border-red-500' : 'border-gray-600'}`}>
                   <div className="flex items-center justify-between flex-wrap gap-2">

@@ -41,6 +41,11 @@ const SENSITIVE_FILES = [
 // Timeout for fetch requests (in milliseconds)
 const FETCH_TIMEOUT = 10000
 
+// Crawling configuration
+const MAX_CRAWL_DEPTH = 3
+const MAX_PAGES_TO_CRAWL = 50
+const MAX_URLS_TO_CHECK = 200
+
 /**
  * Normalize domain - remove protocol and trailing slashes
  */
@@ -99,20 +104,20 @@ function isValidUrl(url) {
 }
 
 /**
- * Extract URLs from HTML content
+ * Extract ALL URLs from HTML content (enhanced)
  */
-function extractUrlsFromHTML(html, baseUrl) {
+function extractUrlsFromHTML(html, baseUrl, baseDomain) {
   const urls = new Set()
   const base = new URL(baseUrl)
 
-  // Extract from href attributes
+  // Extract from href attributes (all links)
   const hrefRegex = /href=["']([^"']+)["']/gi
   let match
   while ((match = hrefRegex.exec(html)) !== null) {
     try {
       const url = new URL(match[1], base).href
-      if (isValidUrl(url)) {
-        urls.add(url)
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
       }
     } catch {
       // Invalid URL, skip
@@ -124,8 +129,34 @@ function extractUrlsFromHTML(html, baseUrl) {
   while ((match = srcRegex.exec(html)) !== null) {
     try {
       const url = new URL(match[1], base).href
-      if (isValidUrl(url)) {
-        urls.add(url)
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
+      }
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+
+  // Extract from data attributes
+  const dataUrlRegex = /data-[\w-]*url=["']([^"']+)["']/gi
+  while ((match = dataUrlRegex.exec(html)) !== null) {
+    try {
+      const url = new URL(match[1], base).href
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
+      }
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+
+  // Extract from action attributes (forms)
+  const actionRegex = /action=["']([^"']+)["']/gi
+  while ((match = actionRegex.exec(html)) !== null) {
+    try {
+      const url = new URL(match[1], base).href
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
       }
     } catch {
       // Invalid URL, skip
@@ -137,21 +168,21 @@ function extractUrlsFromHTML(html, baseUrl) {
   while ((match = fetchRegex.exec(html)) !== null) {
     try {
       const url = new URL(match[1], base).href
-      if (isValidUrl(url)) {
-        urls.add(url)
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
       }
     } catch {
       // Invalid URL, skip
     }
   }
 
-  // Extract from axios.get() calls
-  const axiosRegex = /axios\.(get|post|put|delete)\s*\(\s*["']([^"']+)["']/gi
+  // Extract from axios calls
+  const axiosRegex = /axios\.(get|post|put|delete|patch)\s*\(\s*["']([^"']+)["']/gi
   while ((match = axiosRegex.exec(html)) !== null) {
     try {
       const url = new URL(match[2], base).href
-      if (isValidUrl(url)) {
-        urls.add(url)
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
       }
     } catch {
       // Invalid URL, skip
@@ -163,8 +194,34 @@ function extractUrlsFromHTML(html, baseUrl) {
   while ((match = ajaxRegex.exec(html)) !== null) {
     try {
       const url = new URL(match[1], base).href
-      if (isValidUrl(url)) {
-        urls.add(url)
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
+      }
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+
+  // Extract from window.location
+  const locationRegex = /window\.location\s*=\s*["']([^"']+)["']/gi
+  while ((match = locationRegex.exec(html)) !== null) {
+    try {
+      const url = new URL(match[1], base).href
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
+      }
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+
+  // Extract from URL strings in general
+  const urlStringRegex = /(?:url|endpoint|api|path)\s*[:=]\s*["']([^"']+)["']/gi
+  while ((match = urlStringRegex.exec(html)) !== null) {
+    try {
+      const url = new URL(match[1], base).href
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
       }
     } catch {
       // Invalid URL, skip
@@ -175,9 +232,9 @@ function extractUrlsFromHTML(html, baseUrl) {
 }
 
 /**
- * Extract URLs from JavaScript content
+ * Extract ALL URLs from JavaScript content (enhanced)
  */
-function extractUrlsFromJS(jsContent, baseUrl) {
+function extractUrlsFromJS(jsContent, baseUrl, baseDomain) {
   const urls = new Set()
   const base = new URL(baseUrl)
 
@@ -187,8 +244,8 @@ function extractUrlsFromJS(jsContent, baseUrl) {
   while ((match = fetchRegex.exec(jsContent)) !== null) {
     try {
       const url = new URL(match[1], base).href
-      if (isValidUrl(url)) {
-        urls.add(url)
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
       }
     } catch {
       // Invalid URL, skip
@@ -200,8 +257,8 @@ function extractUrlsFromJS(jsContent, baseUrl) {
   while ((match = axiosRegex.exec(jsContent)) !== null) {
     try {
       const url = new URL(match[2], base).href
-      if (isValidUrl(url)) {
-        urls.add(url)
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
       }
     } catch {
       // Invalid URL, skip
@@ -209,12 +266,12 @@ function extractUrlsFromJS(jsContent, baseUrl) {
   }
 
   // Extract from XMLHttpRequest
-  const xhrRegex = /\.open\s*\(\s*["'](?:GET|POST|PUT|DELETE)["']\s*,\s*["']([^"']+)["']/gi
+  const xhrRegex = /\.open\s*\(\s*["'](?:GET|POST|PUT|DELETE|PATCH)["']\s*,\s*["']([^"']+)["']/gi
   while ((match = xhrRegex.exec(jsContent)) !== null) {
     try {
       const url = new URL(match[1], base).href
-      if (isValidUrl(url)) {
-        urls.add(url)
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
       }
     } catch {
       // Invalid URL, skip
@@ -222,12 +279,38 @@ function extractUrlsFromJS(jsContent, baseUrl) {
   }
 
   // Extract from URL strings that look like API endpoints
-  const apiUrlRegex = /["']([^"']*(?:\/api\/|\/graphql|\.json)[^"']*)["']/gi
+  const apiUrlRegex = /["']([^"']*(?:\/api\/|\/graphql|\.json|\/v\d+\/)[^"']*)["']/gi
   while ((match = apiUrlRegex.exec(jsContent)) !== null) {
     try {
       const url = new URL(match[1], base).href
-      if (isValidUrl(url)) {
-        urls.add(url)
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
+      }
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+
+  // Extract from baseURL, apiUrl, endpoint variables
+  const varUrlRegex = /(?:baseURL|apiUrl|endpoint|api|url)\s*[:=]\s*["']([^"']+)["']/gi
+  while ((match = varUrlRegex.exec(jsContent)) !== null) {
+    try {
+      const url = new URL(match[1], base).href
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
+      }
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+
+  // Extract from template literals
+  const templateRegex = /`([^`]*(?:\/api\/|\/graphql|\.json)[^`]*)`/gi
+  while ((match = templateRegex.exec(jsContent)) !== null) {
+    try {
+      const url = new URL(match[1], base).href
+      if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+        urls.add(normalizeUrl(url))
       }
     } catch {
       // Invalid URL, skip
@@ -248,8 +331,133 @@ function isApiLikeUrl(url) {
     /\/v\d+\//i,
     /\/endpoint/i,
     /\/rest/i,
+    /\/swagger/i,
+    /\/openapi/i,
+    /\/webhook/i,
+    /\/callback/i,
+    /\/oauth/i,
+    /\/auth/i,
+    /\/token/i,
+    /\/user/i,
+    /\/admin/i,
+    /\/dashboard/i,
+    /\/data/i,
+    /\/query/i,
   ]
   return apiPatterns.some(pattern => pattern.test(url))
+}
+
+/**
+ * Check if URL belongs to the same domain (including subdomains)
+ */
+function isSameDomain(url, baseDomain) {
+  try {
+    const urlObj = new URL(url)
+    const urlHost = urlObj.hostname.toLowerCase()
+    const baseHost = baseDomain.toLowerCase()
+    
+    // Exact match
+    if (urlHost === baseHost) return true
+    
+    // Subdomain match (e.g., api.example.com matches example.com)
+    if (urlHost.endsWith('.' + baseHost)) return true
+    
+    return false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Normalize URL - remove fragments, query params for deduplication
+ */
+function normalizeUrl(url) {
+  try {
+    const urlObj = new URL(url)
+    urlObj.hash = ''
+    // Keep query params for APIs as they might be different endpoints
+    return urlObj.href
+  } catch {
+    return url
+  }
+}
+
+/**
+ * Extract URLs from sitemap.xml
+ */
+async function extractUrlsFromSitemap(sitemapUrl, baseDomain) {
+  const urls = new Set()
+  try {
+    const response = await fetchWithTimeout(sitemapUrl, { method: 'GET' })
+    if (!response.ok) return Array.from(urls)
+    
+    const text = await response.text()
+    
+    // Extract URLs from sitemap
+    const urlRegex = /<loc[^>]*>([^<]+)<\/loc>/gi
+    let match
+    while ((match = urlRegex.exec(text)) !== null) {
+      try {
+        const url = match[1].trim()
+        if (isValidUrl(url) && isSameDomain(url, baseDomain)) {
+          urls.add(normalizeUrl(url))
+        }
+      } catch {
+        // Invalid URL, skip
+      }
+    }
+    
+    // Also check for sitemap index files
+    const sitemapIndexRegex = /<sitemap[^>]*>[\s\S]*?<loc[^>]*>([^<]+)<\/loc>/gi
+    while ((match = sitemapIndexRegex.exec(text)) !== null) {
+      try {
+        const sitemapUrl = match[1].trim()
+        if (isValidUrl(sitemapUrl)) {
+          const nestedUrls = await extractUrlsFromSitemap(sitemapUrl, baseDomain)
+          nestedUrls.forEach(u => urls.add(u))
+        }
+      } catch {
+        // Skip nested sitemap
+      }
+    }
+  } catch {
+    // Failed to fetch sitemap
+  }
+  
+  return Array.from(urls)
+}
+
+/**
+ * Extract URLs from robots.txt
+ */
+async function extractUrlsFromRobots(robotsUrl, baseDomain) {
+  const urls = new Set()
+  try {
+    const response = await fetchWithTimeout(robotsUrl, { method: 'GET' })
+    if (!response.ok) return Array.from(urls)
+    
+    const text = await response.text()
+    const base = new URL(robotsUrl)
+    
+    // Extract sitemap URLs
+    const sitemapRegex = /Sitemap:\s*([^\s]+)/gi
+    let match
+    while ((match = sitemapRegex.exec(text)) !== null) {
+      try {
+        const sitemapUrl = new URL(match[1].trim(), base).href
+        if (isValidUrl(sitemapUrl)) {
+          const sitemapUrls = await extractUrlsFromSitemap(sitemapUrl, baseDomain)
+          sitemapUrls.forEach(u => urls.add(u))
+        }
+      } catch {
+        // Skip
+      }
+    }
+  } catch {
+    // Failed to fetch robots.txt
+  }
+  
+  return Array.from(urls)
 }
 
 /**
@@ -364,82 +572,162 @@ async function scanCommonEndpoints(domain) {
 }
 
 /**
- * Crawl homepage and extract URLs
+ * Deep crawl website and discover all URLs, then check for open APIs
  */
-async function crawlHomepage(domain) {
+async function deepCrawlAndFindOpenAPIs(domain) {
   const baseUrl = `https://${domain}`
-  const discoveredEndpoints = []
+  const baseDomain = domain
   const seenUrls = new Set()
+  const urlsToCrawl = []
+  const crawledUrls = new Set()
+  const allDiscoveredUrls = new Set()
+  const openAPIs = []
 
+  // Step 1: Check sitemap.xml and robots.txt
   try {
-    // Fetch homepage
-    const response = await fetchWithTimeout(baseUrl, { method: 'GET' })
-    if (!response.ok) {
-      return discoveredEndpoints
-    }
-
-    const html = await response.text()
-
-    // Extract URLs from HTML
-    const htmlUrls = extractUrlsFromHTML(html, baseUrl)
-    for (const url of htmlUrls) {
+    const sitemapUrls = await extractUrlsFromSitemap(`${baseUrl}/sitemap.xml`, baseDomain)
+    sitemapUrls.forEach(url => {
       if (!seenUrls.has(url)) {
         seenUrls.add(url)
-        if (isApiLikeUrl(url)) {
-          discoveredEndpoints.push({
-            url,
-            found_in: 'homepage_html',
-          })
-        }
+        allDiscoveredUrls.add(url)
+        urlsToCrawl.push(url)
       }
-    }
+    })
 
-    // Find and fetch JS files
-    const jsFileRegex = /<script[^>]*src=["']([^"']+\.js[^"']*)["']/gi
-    let match
-    const jsFiles = []
-    while ((match = jsFileRegex.exec(html)) !== null) {
-      try {
-        const jsUrl = new URL(match[1], baseUrl).href
-        if (isValidUrl(jsUrl) && !seenUrls.has(jsUrl)) {
-          jsFiles.push(jsUrl)
-          seenUrls.add(jsUrl)
-        }
-      } catch {
-        // Invalid URL, skip
+    const robotsUrls = await extractUrlsFromRobots(`${baseUrl}/robots.txt`, baseDomain)
+    robotsUrls.forEach(url => {
+      if (!seenUrls.has(url)) {
+        seenUrls.add(url)
+        allDiscoveredUrls.add(url)
+        urlsToCrawl.push(url)
       }
-    }
+    })
+  } catch {
+    // Continue if sitemap/robots not available
+  }
 
-    // Fetch and analyze JS files (limit to first 10 to avoid timeout)
-    const jsFilesToFetch = jsFiles.slice(0, 10)
-    for (const jsUrl of jsFilesToFetch) {
-      try {
-        const jsResponse = await fetchWithTimeout(jsUrl, { method: 'GET' })
-        if (jsResponse.ok) {
-          const jsContent = await jsResponse.text()
-          const jsUrls = extractUrlsFromJS(jsContent, baseUrl)
+  // Step 2: Start with homepage
+  if (!seenUrls.has(baseUrl)) {
+    seenUrls.add(baseUrl)
+    urlsToCrawl.push(baseUrl)
+  }
 
-          for (const url of jsUrls) {
-            if (!seenUrls.has(url)) {
-              seenUrls.add(url)
-              if (isApiLikeUrl(url)) {
-                discoveredEndpoints.push({
-                  url,
-                  found_in: `js_file:${jsUrl.split('/').pop()}`,
-                })
+  // Step 3: Deep crawl pages (limited depth and count)
+  let crawlDepth = 0
+  const maxDepth = MAX_CRAWL_DEPTH
+  const maxPages = MAX_PAGES_TO_CRAWL
+
+  while (urlsToCrawl.length > 0 && crawledUrls.size < maxPages && crawlDepth < maxDepth) {
+    const currentBatch = urlsToCrawl.splice(0, Math.min(10, urlsToCrawl.length))
+    
+    await Promise.all(
+      currentBatch.map(async (url) => {
+        if (crawledUrls.has(url)) return
+        crawledUrls.add(url)
+
+        try {
+          const response = await fetchWithTimeout(url, { method: 'GET' })
+          if (!response.ok) return
+
+          const contentType = response.headers.get('content-type') || ''
+          
+          if (contentType.includes('text/html')) {
+            const html = await response.text()
+            
+            // Extract all URLs from HTML
+            const htmlUrls = extractUrlsFromHTML(html, url, baseDomain)
+            htmlUrls.forEach(newUrl => {
+              if (!seenUrls.has(newUrl)) {
+                seenUrls.add(newUrl)
+                allDiscoveredUrls.add(newUrl)
+                // Add to crawl queue if same domain and not too deep
+                if (crawlDepth < maxDepth - 1) {
+                  urlsToCrawl.push(newUrl)
+                }
+              }
+            })
+
+            // Extract and analyze JS files
+            const jsFileRegex = /<script[^>]*src=["']([^"']+\.js[^"']*)["']/gi
+            let match
+            const jsFiles = []
+            while ((match = jsFileRegex.exec(html)) !== null && jsFiles.length < 20) {
+              try {
+                const jsUrl = new URL(match[1], url).href
+                if (isValidUrl(jsUrl) && isSameDomain(jsUrl, baseDomain) && !seenUrls.has(jsUrl)) {
+                  jsFiles.push(jsUrl)
+                  seenUrls.add(jsUrl)
+                }
+              } catch {
+                // Skip
+              }
+            }
+
+            // Fetch and analyze JS files
+            for (const jsUrl of jsFiles.slice(0, 15)) {
+              try {
+                const jsResponse = await fetchWithTimeout(jsUrl, { method: 'GET' })
+                if (jsResponse.ok) {
+                  const jsContent = await jsResponse.text()
+                  const jsUrls = extractUrlsFromJS(jsContent, url, baseDomain)
+                  jsUrls.forEach(newUrl => {
+                    if (!seenUrls.has(newUrl)) {
+                      seenUrls.add(newUrl)
+                      allDiscoveredUrls.add(newUrl)
+                    }
+                  })
+                }
+              } catch {
+                // Skip failed JS files
               }
             }
           }
+        } catch {
+          // Skip failed requests
         }
-      } catch {
-        // Failed to fetch JS file, skip
-      }
-    }
-  } catch (error) {
-    console.error('Error crawling homepage:', error)
+      })
+    )
+
+    crawlDepth++
   }
 
-  return discoveredEndpoints
+  // Step 4: Check all discovered URLs for open APIs
+  const urlsToCheck = Array.from(allDiscoveredUrls)
+    .filter(url => isApiLikeUrl(url) || url.includes('/api') || url.endsWith('.json'))
+    .slice(0, MAX_URLS_TO_CHECK)
+
+  // Check URLs in batches
+  const batchSize = 10
+  for (let i = 0; i < urlsToCheck.length; i += batchSize) {
+    const batch = urlsToCheck.slice(i, i + batchSize)
+    const results = await Promise.all(
+      batch.map(async (url) => {
+        const result = await scanEndpoint(url)
+        if (result.open && result.status === 200) {
+          return {
+            url: result.url,
+            status: result.status,
+            open: true,
+            sample: result.sample,
+            dataType: result.dataType,
+            dataInfo: result.dataInfo,
+            contentType: result.contentType,
+            contentLength: result.contentLength,
+            found_in: 'deep_crawl',
+          }
+        }
+        return null
+      })
+    )
+    
+    results.forEach(result => {
+      if (result) {
+        openAPIs.push(result)
+      }
+    })
+  }
+
+  return openAPIs
 }
 
 /**
@@ -549,19 +837,50 @@ export default {
         )
       }
 
-      // Perform scans in parallel
-      const [commonEndpoints, discoveredEndpoints, sensitiveFiles] = await Promise.all([
+      // Perform scans - deep crawl will find all open APIs
+      const [commonEndpoints, deepCrawlOpenAPIs, sensitiveFiles] = await Promise.all([
         scanCommonEndpoints(normalizedDomain),
-        crawlHomepage(normalizedDomain),
+        deepCrawlAndFindOpenAPIs(normalizedDomain),
         checkSensitiveFiles(normalizedDomain),
       ])
 
-      // Return results
+      // Filter common endpoints to only show open ones
+      const openCommonEndpoints = commonEndpoints.filter(e => e.open)
+      
+      // Filter sensitive files to only show exposed ones
+      const exposedSensitiveFiles = sensitiveFiles.filter(f => f.exposed)
+
+      // Combine all open APIs (remove duplicates)
+      const allOpenAPIs = []
+      const seenApiUrls = new Set()
+      
+      // Add common open endpoints
+      openCommonEndpoints.forEach(ep => {
+        if (!seenApiUrls.has(ep.url)) {
+          seenApiUrls.add(ep.url)
+          allOpenAPIs.push(ep)
+        }
+      })
+      
+      // Add deep crawl open APIs
+      deepCrawlOpenAPIs.forEach(api => {
+        if (!seenApiUrls.has(api.url)) {
+          seenApiUrls.add(api.url)
+          allOpenAPIs.push(api)
+        }
+      })
+
+      // Return results - ONLY open APIs and exposed files
       const results = {
         domain: normalizedDomain,
-        common_endpoints: commonEndpoints,
-        discovered_endpoints: discoveredEndpoints,
-        sensitive_files: sensitiveFiles,
+        open_apis: allOpenAPIs,
+        exposed_sensitive_files: exposedSensitiveFiles,
+        scan_summary: {
+          total_open_apis: allOpenAPIs.length,
+          total_exposed_files: exposedSensitiveFiles.length,
+          common_endpoints_checked: commonEndpoints.length,
+          common_endpoints_open: openCommonEndpoints.length,
+        },
       }
 
       return new Response(JSON.stringify(results), {
