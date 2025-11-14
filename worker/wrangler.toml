@@ -1,0 +1,12 @@
+name = "open-api-exposure-scanner"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+# Uncomment and configure if you need environment variables
+# [vars]
+# ENVIRONMENT = "production"
+
+# Uncomment if you need secrets (use `wrangler secret put SECRET_NAME`)
+# [secrets]
+# API_KEY = ""
+

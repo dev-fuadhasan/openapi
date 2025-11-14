@@ -1,0 +1,16 @@
+# Netlify configuration for root directory
+# When deploying, set base directory to "frontend" in Netlify dashboard
+
+[build]
+  base = "frontend"
+  command = "npm install && npm run build"
+  publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
