@@ -804,21 +804,30 @@ async function testSqlInjection(url) {
             }
           })
           
-          if (!response.ok) continue
-          
+          // Get response text even for error status codes (500 errors often contain SQL errors)
           const responseText = await response.text()
           
-          // Check for SQL error patterns
+          // Skip only if it's a clear 404 without any content
+          if (response.status === 404 && responseText.length < 100) continue
+          
+          // Check for SQL error patterns (expanded to catch more error types)
           const sqlErrorPatterns = [
             /mysql_fetch_array/i,
             /mysql_fetch_assoc/i,
             /mysql_num_rows/i,
             /mysql_query/i,
             /mysql_error/i,
+            /mysql_connect/i,
+            /mysql_select_db/i,
             /Warning.*mysql/i,
             /SQL syntax.*MySQL/i,
             /MySQLSyntaxErrorException/i,
             /valid MySQL result/i,
+            /Query.*exceeded/i,
+            /max_user_connections/i,
+            /Error.*Connect failed/i,
+            /Error at.*Query/i,
+            /Query:.*User/i,
             /PostgreSQL.*ERROR/i,
             /Warning.*\Wpg_/i,
             /valid PostgreSQL result/i,
@@ -848,28 +857,62 @@ async function testSqlInjection(url) {
             /mysqli_/i,
             /PDOException/i,
             /SQLSTATE\[/i,
+            /Database.*error/i,
+            /DB.*error/i,
+            /Connection.*failed/i,
+            /Connect.*failed/i,
+            /Error.*Query/i,
+            /Query.*Error/i,
+            /Database connection/i,
+            /SQL.*error/i,
+            /error.*sql/i,
+            /syntax error.*sql/i,
+            /You have an error in your SQL syntax/i,
+            /Unknown column/i,
+            /Table.*doesn't exist/i,
+            /Column.*doesn't exist/i,
           ]
           
           // Check for SQL error in response
           const hasSqlError = sqlErrorPatterns.some(pattern => pattern.test(responseText))
           
+          // Also check if response contains database-related keywords (even without explicit errors)
+          const hasDatabaseKeywords = /(database|db|query|sql|mysql|postgres|oracle|mssql|connection|connect)/i.test(responseText)
+          
           // Check for different response length (potential SQL injection)
-          const originalResponse = await fetchWithTimeout(url, { method: 'GET' })
-          if (originalResponse.ok) {
-            const originalText = await originalResponse.text()
-            const lengthDiff = Math.abs(responseText.length - originalText.length)
-            const significantDiff = lengthDiff > 100 // More than 100 chars difference
-            
-            if (hasSqlError || significantDiff) {
-              vulnerableParams.push({
-                parameter: param,
-                payload: payload,
-                vulnerable: true,
-                evidence: hasSqlError ? 'SQL Error in response' : 'Response length difference',
-                response_sample: responseText.substring(0, 500),
-              })
-              break // Found vulnerability, move to next parameter
+          let originalText = ''
+          try {
+            const originalResponse = await fetchWithTimeout(url, { method: 'GET' })
+            if (originalResponse.ok || originalResponse.status === 500) {
+              originalText = await originalResponse.text()
             }
+          } catch {
+            // If original URL fails, use empty string for comparison
+          }
+          
+          const lengthDiff = originalText ? Math.abs(responseText.length - originalText.length) : 0
+          const significantDiff = lengthDiff > 50 // More than 50 chars difference
+          
+          // Also check if response is significantly different in content
+          const contentDifferent = originalText && 
+            (responseText.toLowerCase().includes('error') && !originalText.toLowerCase().includes('error')) ||
+            (responseText.toLowerCase().includes('query') && !originalText.toLowerCase().includes('query'))
+          
+          // Consider vulnerable if:
+          // 1. Has SQL error patterns
+          // 2. Has database keywords AND significant length difference
+          // 3. Content is significantly different (error appears)
+          if (hasSqlError || (hasDatabaseKeywords && (significantDiff || contentDifferent))) {
+            vulnerableParams.push({
+              parameter: param,
+              payload: payload,
+              vulnerable: true,
+              evidence: hasSqlError ? 'SQL/Database Error in response' : 
+                       (hasDatabaseKeywords && significantDiff) ? 'Database error detected (response difference)' :
+                       'Potential SQL injection (response difference)',
+              response_sample: responseText.substring(0, 1000),
+            })
+            break // Found vulnerability, move to next parameter
           }
         } catch {
           // Skip failed test
@@ -908,7 +951,7 @@ async function findAndTestSqlInjection(domain, allDiscoveredUrls) {
     }
   }
   
-  // Also check common PHP parameter patterns
+  // Also check common PHP parameter patterns (expanded list)
   const commonPhpPatterns = [
     '/index.php?id=',
     '/page.php?id=',
@@ -920,6 +963,26 @@ async function findAndTestSqlInjection(domain, allDiscoveredUrls) {
     '/category.php?id=',
     '/user.php?id=',
     '/profile.php?id=',
+    '/gallery.php?id=',
+    '/image.php?id=',
+    '/photo.php?id=',
+    '/item.php?id=',
+    '/content.php?id=',
+    '/post.php?id=',
+    '/blog.php?id=',
+    '/show.php?id=',
+    '/display.php?id=',
+    '/read.php?id=',
+    '/single.php?id=',
+    '/story.php?id=',
+    '/event.php?id=',
+    '/course.php?id=',
+    '/lesson.php?id=',
+    '/video.php?id=',
+    '/file.php?id=',
+    '/download.php?id=',
+    '/attachment.php?id=',
+    '/document.php?id=',
   ]
   
   const baseUrl = `https://${domain}`
@@ -940,15 +1003,29 @@ async function findAndTestSqlInjection(domain, allDiscoveredUrls) {
     const results = await Promise.all(
       batch.map(async (url) => {
         try {
-          // First check if URL exists
+          // First check if URL exists (including 500 errors which might indicate SQL issues)
           const checkResponse = await fetchWithTimeout(url, { method: 'GET' })
-          if (checkResponse.ok || checkResponse.status === 500) {
+          // Test if URL exists (200, 500, or even 404 might have SQL errors)
+          if (checkResponse.status === 200 || checkResponse.status === 500) {
             // URL exists, test for SQL injection
             return await testSqlInjection(url)
           }
+          // Also test 404s as they might still reveal SQL errors
+          if (checkResponse.status === 404) {
+            const text = await checkResponse.text()
+            // If 404 page contains SQL errors, it's still a vulnerability
+            if (/Error.*Query|Query.*Error|mysql|database.*error/i.test(text)) {
+              return await testSqlInjection(url)
+            }
+          }
           return null
-        } catch {
-          return null
+        } catch (error) {
+          // Even if request fails, try testing (might be SQL error causing failure)
+          try {
+            return await testSqlInjection(url)
+          } catch {
+            return null
+          }
         }
       })
     )
