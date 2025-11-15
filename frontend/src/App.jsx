@@ -77,7 +77,8 @@ function App() {
         {scanResults && !loading && (() => {
           const openAPIs = scanResults.open_apis || []
           const exposedFiles = scanResults.exposed_sensitive_files || []
-          const totalOpen = openAPIs.length + exposedFiles.length
+          const sqlInjectionVulns = scanResults.sql_injection_vulnerabilities || []
+          const totalOpen = openAPIs.length + exposedFiles.length + sqlInjectionVulns.length
           const summary = scanResults.scan_summary || {}
 
           return (
@@ -125,6 +126,19 @@ function App() {
                             </ul>
                           </div>
                         )}
+                        {sqlInjectionVulns.length > 0 && (
+                          <div className="text-red-200">
+                            <span className="font-semibold">• {sqlInjectionVulns.length} SQL Injection Vulnerabilit{sqlInjectionVulns.length > 1 ? 'ies' : 'y'} Found:</span>
+                            <ul className="ml-4 mt-1 space-y-1">
+                              {sqlInjectionVulns.slice(0, 3).map((vuln, idx) => (
+                                <li key={idx} className="text-sm font-mono">{vuln.url}</li>
+                              ))}
+                              {sqlInjectionVulns.length > 3 && (
+                                <li className="text-sm">... and {sqlInjectionVulns.length - 3} more</li>
+                              )}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -161,11 +175,73 @@ function App() {
                       <div className="text-2xl font-bold text-blue-400">{summary.common_endpoints_checked || 0}</div>
                     </div>
                     <div>
-                      <div className="text-gray-400">Pages Crawled</div>
-                      <div className="text-2xl font-bold text-purple-400">50+</div>
+                      <div className="text-gray-400">SQL Injection Vulns</div>
+                      <div className="text-2xl font-bold text-red-400">{summary.total_sql_injection_vulns || 0}</div>
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* SQL Injection Vulnerabilities */}
+              {sqlInjectionVulns.length > 0 && (
+                <ResultCard
+                  title={`SQL Injection Vulnerabilities Found (${sqlInjectionVulns.length})`}
+                  items={sqlInjectionVulns}
+                  renderItem={(vuln) => (
+                    <div className="border-l-4 border-red-600 pl-4 py-3 rounded-r bg-red-500/10">
+                      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+                        <a
+                          href={vuln.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-red-400 hover:text-red-300 break-all font-mono text-sm font-semibold"
+                        >
+                          {vuln.url}
+                        </a>
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-600 text-white animate-pulse">
+                          🔴 HIGH SEVERITY
+                        </span>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <div className="text-red-300 text-sm font-semibold">
+                          ⚠️ Vulnerable Parameters:
+                        </div>
+                        {vuln.vulnerable_params && vuln.vulnerable_params.map((param, idx) => (
+                          <div key={idx} className="bg-gray-900/50 p-3 rounded border border-red-500/30">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-red-400 font-semibold text-xs">Parameter:</span>
+                              <span className="text-yellow-300 font-mono text-xs">{param.parameter}</span>
+                            </div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-red-400 font-semibold text-xs">Payload:</span>
+                              <span className="text-gray-300 font-mono text-xs bg-gray-800 px-2 py-1 rounded">{param.payload}</span>
+                            </div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-red-400 font-semibold text-xs">Evidence:</span>
+                              <span className="text-red-300 text-xs">{param.evidence}</span>
+                            </div>
+                            {param.response_sample && (
+                              <div className="mt-2">
+                                <div className="text-gray-400 text-xs mb-1">Response Sample:</div>
+                                <div className="bg-gray-800 p-2 rounded text-xs text-gray-300 font-mono overflow-x-auto max-h-40 overflow-y-auto">
+                                  <pre className="whitespace-pre-wrap break-words">{param.response_sample}</pre>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      
+                      <div className="mt-3 p-2 bg-red-500/10 border border-red-500/30 rounded">
+                        <p className="text-red-300 text-xs">
+                          <strong>⚠️ Security Risk:</strong> This URL is vulnerable to SQL injection attacks. 
+                          Attackers could potentially access, modify, or delete database records.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                />
               )}
 
               {/* Open APIs */}

